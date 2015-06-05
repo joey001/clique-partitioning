@@ -24,8 +24,8 @@
 using namespace std;
 
 #define DEBUG 0
-#define LOCAL_OPT_RECORD 0
-#define MAX_LOCAL_REC_NUM 5000
+#define LOCAL_OPT_RECORD 1
+#define MAX_LOCAL_REC_NUM 50
 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define PARENT(idx) ((idx-1)/2)
@@ -37,10 +37,12 @@ const int MAX_VAL = 999999999;
 const float CONST_E = 2.71828f;
 
 //Modified in the script
-char param_filename[1000] = "/home/zhou/workspace/org_instances/p500-5-3.txt";
-int param_knownbest = 16816;
-int param_time = 100000;		//the max time for tabu search procedure, unit: second
-int param_runcnt = 10;		// the running time for each instance
+char param_filename[1000] = "/home/zhou/cpp_result/cpp_link/instances/p500-5-10.txt";
+int param_knownbest = 17360;
+int param_time = 10000;		//the max time for tabu search procedure, unit: second
+int param_runcnt = 1;		// the running time for each instance
+
+
 float param_alpha = 0.1f; 	// the ratio for weak perturbation
 float param_beta = 0.4f;	// the raito for strong perturbation
 //int param_iter_tabu = 500;
@@ -87,14 +89,15 @@ typedef struct ST_LC_OPT{
 //	}
 }LC_opt;
 LC_opt lc_recs[MAX_LOCAL_REC_NUM];
+int lc_num = 0;
+int lc_min = 0;
 #endif
 
 
-int nnode;
-int **matrix;
-GammaData *pgamma;
-Stats finstats;
-int lc_num = 0;
+int nnode;	/*Number of vertices in graph*/
+int **matrix; /*Adjacent matrix of graph*/
+
+Stats finstats;	/*The recorder*/
 
 /*partition data*/
 int *ppos;
@@ -102,13 +105,14 @@ int *pbkt;
 int pbkt_size = 0;
 int *pcnt;
 int *pvertex;
+GammaData *pgamma;	/*Heap organized gamma table for each vertex to each partition*/
 
 int fbest = 0;
 int fcurrent = 0;
 clock_t starttime;
 long long **tabutbl;
 long long tabu_itr = 0;
-long long gpass = 0;
+long long gpass = 0; /*Count the number of phases*/
 long long gitr = 0;
 
 
@@ -116,7 +120,7 @@ long long gitr = 0;
 inline void recordgitr(){
 	gitr++;
 //	if (gitr % 10000 == 0){
-//		printf("%d,",finstats.bestresult);
+//		printf("%d\n",finstats.bestresult);
 //	}
 }
 void loadCompletedGraph(char *filename){
@@ -147,11 +151,11 @@ void loadCompletedGraph(char *filename){
 
 void printMove(const StepMove *move){
 	if (move->mvertex == 1){
-		printf("ITR %lld: %d->%d:%d \n",tabu_itr, move->orderedVetexes[0],move->orderedTarget[0], move->inc);
+		printf("ITR %lld: %d->%d:%d \n",tabu_itr, move->orderedVertices[0],move->orderedTarget[0], move->inc);
 	}
 	if (move->mvertex == 2){
-		printf("ITR %lld: %d->%d,%d->%d:%d \n",tabu_itr, move->orderedVetexes[0],move->orderedTarget[0],
-				move->orderedVetexes[1],move->orderedTarget[1],
+		printf("ITR %lld: %d->%d,%d->%d:%d \n",tabu_itr, move->orderedVertices[0],move->orderedTarget[0],
+				move->orderedVertices[1],move->orderedTarget[1],
 				move->inc);
 	}
 }
@@ -349,7 +353,9 @@ GammaData* buildGammaData(){
 	return gamma;
 }
 
-/*Move vertex from src_part to dest_part, call this function before execute the move */
+/**
+ * Move vertex from src_part to dest_part, call this function before execute the move
+ */
 void updateGamma(GammaData *gamma, int vertex, int src_part, int dest_part){
 	//move vertex i to partition
 	assert(pvertex[vertex] == src_part);
@@ -400,6 +406,7 @@ void disposeGamma(GammaData *gamma){
 }
 
 /**************************Other useful funtion****************************/
+/*if the two solution is the same, return 1, otherwise return 0*/
 int compareSolution(int *sa, int *sb, int n){
 	int *dict = new int[n];
 	memset(dict, -1, sizeof(int) * n);
@@ -449,7 +456,7 @@ int decideTarget(StepMove move){
  */
 void executeStepMove(StepMove &move){
 	int target = decideTarget(move);
-	int curvertex = move.orderedVetexes[0];
+	int curvertex = move.orderedVertices[0];
 
 	//update gamma table
 	updateGamma(pgamma, curvertex, pvertex[curvertex], target);
@@ -505,6 +512,7 @@ void initDataStructure(){
 		lc_recs[i].s = 0;
 	}
 	lc_num = 0;
+	lc_min = MAX_VAL;
 #endif
 }
 
@@ -538,11 +546,11 @@ void descentSearch(){
 		}
 		recordgitr();
 	}
-	assert(calculateSum(pvertex) == fcurrent);
+	//assert(calculateSum(pvertex) == fcurrent);
 	if (fcurrent > fbest){
 		recordBest(DESCENT);
 	}
-//	printf("After descent: current %d-%d \n",gitr, fcurrent);
+	printf("After descent: current %d-%d \n",gitr, fcurrent);
 }
 
 int findBestMove(StepMove *chosenMove){
@@ -561,8 +569,7 @@ int findBestMove(StepMove *chosenMove){
 				bestinc = gain;
 				maxmove = curmove;
 				eqcnt = 0;
-			}
-			else if (gain == bestinc){ // Find the best one from all the moves with negative improvement;
+			}else if (gain == bestinc){ // Find the best one from all the moves with negative improvement;
 				eqcnt++;
 				if (rand() % eqcnt == 0)
 					maxmove = curmove;
@@ -588,7 +595,7 @@ void tabuExploreSearch(){
 			cerr << "None node could be moved\n" << endl;
 			exit(0);
 		}
-		int curvertex = chosenMove.orderedVetexes[0];
+		int curvertex = chosenMove.orderedVertices[0];
 		int oldpart = pvertex[curvertex];
 		/*Update tabu table*/
 		if (pcnt[oldpart] == 1)
@@ -642,6 +649,7 @@ void directedPerturb(){
 	int strength = (int)(param_alpha * nnode) + rand() % (int)(param_beta* nnode);
 	int itr_cnt = 0;
 	while(itr_cnt < strength){
+		/*A heap structure queue to keep the the param_max_queue_size maximum*/
 		FixedSizeQueue* fq = newFixedSizeQueue(param_max_queue_size);
 		for (int i = 0; i < nnode; i++){
 			int best_part = pgamma->best_improve[i];
@@ -661,7 +669,7 @@ void directedPerturb(){
 #if (DEBUG)
 		printMove(&choice);
 #endif
-		moved[choice.orderedVetexes[0]] = 1;
+		moved[choice.orderedVertices[0]] = 1;
 		itr_cnt++;
 		recordgitr();
 	}
@@ -702,7 +710,7 @@ void threePhaseMain(int index){
 //			fflush(stdout);
 //			len++;
 //		}
-//		gpass++;
+		gpass++;
 	}
 	finstats.total_run_time = (double)(clock() - starttime) / CLOCKS_PER_SEC;
 	finstats.total_run_itr = gpass;

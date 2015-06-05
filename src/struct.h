@@ -11,7 +11,7 @@
 using namespace std;
 typedef struct{
 	int mvertex;
-	int orderedVetexes[1];
+	int orderedVertices[1];
 	int orderedTarget[1];
 	int inc;
 }StepMove;

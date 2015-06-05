@@ -35,7 +35,7 @@ void swapAry(int *ary, int idx1, int idx2){
 StepMove make_1StepMove(int vertex, int target, int gain){
 	StepMove sm;
 	sm.mvertex = 1;
-	sm.orderedVetexes[0] = vertex;
+	sm.orderedVertices[0] = vertex;
 	sm.orderedTarget[0] = target;
 	sm.orderedTarget[1] = target;
 	sm.inc = gain;
@@ -44,8 +44,8 @@ StepMove make_1StepMove(int vertex, int target, int gain){
 StepMove make_2StepMove(int vertex1, int vertex2, int target1, int target2, int gain){
 	StepMove sm;
 	sm.mvertex = 2;
-	sm.orderedVetexes[0] = vertex1;
-	sm.orderedVetexes[1] = vertex2;
+	sm.orderedVertices[0] = vertex1;
+	sm.orderedVertices[1] = vertex2;
 	sm.orderedTarget[0] = target1;
 	sm.orderedTarget[1] = target2;
 	sm.inc = gain;
