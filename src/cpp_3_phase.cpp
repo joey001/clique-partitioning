@@ -24,6 +24,7 @@
 using namespace std;
 
 #define DEBUG 0
+#define DETAIL 1
 #define LOCAL_OPT_RECORD 1
 #define MAX_LOCAL_REC_NUM 50
 
@@ -37,19 +38,21 @@ const int MAX_VAL = 999999999;
 const float CONST_E = 2.71828f;
 
 //Modified in the script
-char param_filename[1000] = "/home/zhou/cpp_result/cpp_link/instances/p500-5-10.txt";
-int param_knownbest = 17360;
-int param_time = 10000;		//the max time for tabu search procedure, unit: second
+char param_filename[1000] = "/home/zhou/cpp/benchmarks/charon_busco/rand400-5.txt";
+int param_knownbest = 12133;
 int param_runcnt = 1;		// the running time for each instance
-
+int param_time = 400;		//the max time for tabu search procedure, unit: second
 
 float param_alpha = 0.1f; 	// the ratio for weak perturbation
 float param_beta = 0.4f;	// the raito for strong perturbation
 //int param_iter_tabu = 500;
+int param_seed = 123;
 int param_coftabu = 15;	// coefficient of tabu search
 const unsigned int param_klen = 4;
 int param_tabu_depth = 10000000;
 FILE *frec = NULL;
+
+vector<int*> analyse_pool;
 
 //int param_max_queue_size = 10;
 typedef struct STGammaRow{
@@ -64,20 +67,26 @@ typedef struct STGammaData{
 	GammaRow* rows;
 	int *best_improve;
 	int global_best;
+
+	RandAcessList *bound_ral;
+	int *isbound;
 }GammaData;
 
 typedef enum{DESCENT, TABU, DIRECTED} SearchType;
 
 typedef struct ST_Stats{
-	float best_found_time;
-	int bestresult;
-	int *bestpat;
+	int best_obj_value;
+	int best_part_num;
 	SearchType found_searh;
-	long long globle_itr;
-	long long tabu_itr;
 
+	double best_found_time;
 	double total_run_time;
+
+	long long best_found_iter;
 	long long total_run_itr;
+#if(DETAIL)
+	int *bestpat;
+#endif
 }Stats;
 
 #if (LOCAL_OPT_RECORD)
@@ -96,35 +105,33 @@ int lc_min = 0;
 
 int nnode;	/*Number of vertices in graph*/
 int **matrix; /*Adjacent matrix of graph*/
+int max_eweight; /*The maxweight of all the edges*/
 
 Stats finstats;	/*The recorder*/
 
-/*partition data*/
-int *ppos;
-int *pbkt;
-int pbkt_size = 0;
-int *pcnt;
-int *pvertex;
+/*-------------partition data, maintain the current solution--------------*/
+int *ppos;			/*ppos[pid] is the position of "pid" in "pbkt"*/
+int *pbkt;			/*Elements from pbkt[0] to pbkt[pbkt_size-1] include all the partition ids*/
+int pbkt_size = 0;	/*The number of partitions*/
+int *pcnt;	 		/*The number of vertices in each partition*/
+int *pvertex;		/*The partition of each vertex, for example, v is in partition pvertex[v] */
 GammaData *pgamma;	/*Heap organized gamma table for each vertex to each partition*/
-
-int fbest = 0;
 int fcurrent = 0;
-clock_t starttime;
+int wbound;
+RandAcessList *wral;	/*Records all the move with more than -wbound gain*/
+
+clock_t starttime;	/*The start time of */
+int fbest = 0;
 long long **tabutbl;
-long long tabu_itr = 0;
-long long gpass = 0; /*Count the number of phases*/
+//long long tabu_itr = 0;
+//long long gpass = 0; /*Count the number of phases*/
 long long gitr = 0;
+/*-------------------------------------------------------------------------*/
 
-
-
-inline void recordgitr(){
-	gitr++;
-//	if (gitr % 10000 == 0){
-//		printf("%d\n",finstats.bestresult);
-//	}
-}
 void loadCompletedGraph(char *filename){
 	ifstream fin;
+	max_eweight = -MAX_VAL;
+
 	fin.open(filename);
 	if (fin.fail()){
 		cerr << "Can not open file " << filename << endl;
@@ -144,21 +151,40 @@ void loadCompletedGraph(char *filename){
 		for (int nj = ni; nj < nnode; nj++){
 			fin >> val;
 			matrix[ni][nj] = matrix[nj][ni] = -val;
+			if (val > max_eweight){
+				max_eweight = val;
+			}
 		}
 		ni++;
 	}
 }
+void showPartition(FILE *f, int *p){
+	int *mark = new int[nnode+1];
+	memset(mark, 0, sizeof(int) * (nnode+1));
+	for (int i = 0; i < nnode; i++) mark[p[i]] = 1;
+	int cnt = 1;
+	for (int i = 0; i < nnode + 1; i++){
+		if (mark[i] != 0)
+			mark[i] = cnt++;
+	}
+	fprintf(f, "Solution in order:");
+	for(int i = 0; i < nnode; i++){
+		fprintf(f, "%d ",mark[p[i]]);
+	}
+	fprintf(f, "\n");
+}
 
 void printMove(const StepMove *move){
 	if (move->mvertex == 1){
-		printf("ITR %lld: %d->%d:%d \n",tabu_itr, move->orderedVertices[0],move->orderedTarget[0], move->inc);
+		printf("ITR %lld: %d->%d:%d \n",gitr, move->orderedVertices[0],move->orderedTarget[0], move->inc);
 	}
 	if (move->mvertex == 2){
-		printf("ITR %lld: %d->%d,%d->%d:%d \n",tabu_itr, move->orderedVertices[0],move->orderedTarget[0],
+		printf("ITR %lld: %d->%d,%d->%d:%d \n",gitr, move->orderedVertices[0],move->orderedTarget[0],
 				move->orderedVertices[1],move->orderedTarget[1],
 				move->inc);
 	}
 }
+
 void printOderedSteps(const vector<StepMove> *moves, int n = 10){
 	for (int i = 0; i < n; i++){
 		printMove(&(moves->at(i)));
@@ -224,6 +250,23 @@ void buildPartition(int *vpart){
 	}
 	memcpy(pvertex, vpart, sizeof(int)*nnode);
 }
+void updatePartition(int v, int target){
+	int oldpartition = pvertex[v];
+	assert(target !=EMPTY_IDX);
+	if (oldpartition == target)
+		printf("Meaningless move\n");
+	pcnt[oldpartition]--;
+	pcnt[target]++;
+	//the old cluster of v is empty
+	if (pcnt[oldpartition] == 0){
+		int end_pid = pbkt[pbkt_size-1];
+		swapAry(pbkt, pbkt_size-1, ppos[oldpartition]);
+		swapAry(ppos, end_pid, oldpartition);
+		pbkt_size--;
+	}
+	pvertex[v] = target;
+}
+
 int calculateDistance(int *p1, int *p2){
 	int sum = 0;
 	for (int i = 0; i < nnode; i++){
@@ -318,11 +361,17 @@ void addGammaRow(GammaRow *gr, int partid){
 	adjustGammaRow(gr, partid);
 }
 
+
 GammaData* buildGammaData(){
 	GammaData* gamma = new GammaData;
 	gamma->gammatbl = new int*[nnode];
 	gamma->best_improve = new int[nnode];
 	gamma->rows = new GammaRow[nnode];
+
+	gamma->isbound = new int[nnode];
+	gamma->bound_ral = ral_init(nnode);
+	memset(gamma->isbound, 0, sizeof(int) * nnode);
+
 	memset(gamma->best_improve, -1, sizeof(int) * nnode);
 	//for each node
 	for(int i = 0; i < nnode; i++){
@@ -332,13 +381,14 @@ GammaData* buildGammaData(){
 			gamma->gammatbl[i][pvertex[j]] += matrix[i][j];
 		}
 		buildGammaRowFromPartition(&(gamma->rows[i]), gamma->gammatbl[i], nnode+1);
-		int top_part = gamma->rows[i].heap[0];
-		int selft_part = pvertex[i];
+
 		GammaRow *grow =  &(gamma->rows[i]);
+		int top_part = grow->heap[0];
+		int selft_part = pvertex[i];
 	//ERROR: The nodes which does not meet the following condition will NOT be initialized
 	//In order to compare, we did not remove this error
-//		if (gamma->gammatbl[i][best_part] > gamma->gammatbl[i][selft_part])
-//			gamma->best_improve[i] = best_part;
+	//		if (gamma->gammatbl[i][best_part] > gamma->gammatbl[i][selft_part])
+	//			gamma->best_improve[i] = best_part;
 		if (selft_part != top_part)
 			gamma->best_improve[i] = top_part;
 		else{
@@ -348,6 +398,14 @@ GammaData* buildGammaData(){
 				if (grow->values[grow->heap[2]] > grow->values[left])
 					gamma->best_improve[i] = grow->heap[2];
 			}
+		}
+		int delta = gamma->gammatbl[i][gamma->best_improve[i]] - gamma->gammatbl[i][selft_part];
+		if (delta >= -wbound && (!gamma->isbound[i])){
+			ral_add(gamma->bound_ral, i);
+			gamma->isbound[i] = 1;
+		}else if (delta < -wbound && (gamma->isbound[i])){
+			ral_delete(gamma->bound_ral, i);
+			gamma->isbound[i] = 0;
 		}
 	}
 	return gamma;
@@ -376,11 +434,12 @@ void updateGamma(GammaData *gamma, int vertex, int src_part, int dest_part){
 		}else{
 			adjustGammaRow(grow, dest_part);
 		}
+
 		//adjust the best
 		int self_part = (i == vertex) ? dest_part : pvertex[i];
-		int top = grow->heap[0];
-		if (self_part != top)
-			gamma->best_improve[i] = top;
+		int top_part = grow->heap[0];
+		if (self_part != top_part)
+			gamma->best_improve[i] = top_part;
 		else{
 			int left = grow->heap[1];
 			gamma->best_improve[i] = left;
@@ -388,6 +447,14 @@ void updateGamma(GammaData *gamma, int vertex, int src_part, int dest_part){
 				if (v[grow->heap[2]] > v[left])
 					gamma->best_improve[i] = grow->heap[2];
 			}
+		}
+		int delta = gamma->gammatbl[i][gamma->best_improve[i]] - gamma->gammatbl[i][self_part];
+		if (delta >= -wbound && (!gamma->isbound[i])){
+			ral_add(gamma->bound_ral, i);
+			gamma->isbound[i] = 1;
+		}else if (delta < -wbound && (gamma->isbound[i])){
+			ral_delete(gamma->bound_ral, i);
+			gamma->isbound[i] = 0;
 		}
 	}
 }
@@ -422,22 +489,7 @@ int compareSolution(int *sa, int *sb, int n){
 }
 
 
-void updatePartition(int v, int target){
-	int oldpartition = pvertex[v];
-	assert(target !=EMPTY_IDX);
-	if (oldpartition == target)
-		printf("Meaningless move\n");
-	pcnt[oldpartition]--;
-	pcnt[target]++;
-	//the old cluster of v is empty
-	if (pcnt[oldpartition] == 0){
-		int end_pid = pbkt[pbkt_size-1];
-		swapAry(pbkt, pbkt_size-1, ppos[oldpartition]);
-		swapAry(ppos, end_pid, oldpartition);
-		pbkt_size--;
-	}
-	pvertex[v] = target;
-}
+
 
 int decideTarget(StepMove move){
 	int target = move.orderedTarget[0];
@@ -466,26 +518,31 @@ void executeStepMove(StepMove &move){
 void recordBest(SearchType srh){
 	fbest = fcurrent;
 
-	finstats.bestresult = fbest;
+	finstats.best_obj_value = fbest;
+	finstats.best_part_num = pbkt_size - 1;
+
 	finstats.best_found_time = (float)(clock() - starttime) / CLOCKS_PER_SEC;
-	finstats.globle_itr = gpass;
+	finstats.best_found_iter = gitr;
 	finstats.found_searh = srh;
-	if (srh == TABU){
-		finstats.tabu_itr = tabu_itr;
-	}
+#if (DETAIL)
 	memcpy(finstats.bestpat, pvertex, sizeof(int)*nnode);
-	finstats.total_run_itr = 0;
+#endif
 }
 void clearFinalStats(){
 	finstats.best_found_time = 0.0f;
-	finstats.bestresult = -MAX_VAL;
-	finstats.globle_itr = 0l;
-	finstats.tabu_itr = 0l;
 	finstats.total_run_time = 0.0f;
+
+	finstats.best_found_iter = 0l;
+	finstats.total_run_itr = 0l;
+
+	finstats.best_part_num = -1;
+	finstats.best_obj_value = -MAX_VAL;
+#if(DETAIL)
 	if (finstats.bestpat == NULL)
 		finstats.bestpat = new int[nnode];
 	memset(finstats.bestpat, 0, sizeof(int) * nnode);
-	finstats.total_run_itr = 0;
+#endif
+
 }
 void initDataStructure(){
 	allocatePartitionData();
@@ -504,8 +561,8 @@ void initDataStructure(){
 	pgamma = buildGammaData();
 
 	starttime = clock();
-	tabu_itr = 0;
-	gpass = 0;
+	gitr = 0;
+	wbound = max_eweight; /*set wbound as max_eweight*/
 #if (LOCAL_OPT_RECORD)
 	for (int i = 0; i < MAX_LOCAL_REC_NUM; i++){
 		lc_recs[i].pv = NULL;
@@ -528,14 +585,12 @@ void clearDataStructure(){
 	delete[] tabutbl;
 }
 void descentSearch(){
-	int *randlst = new int[nnode];
 	int improved = 1;
 
 	while (improved == 1){
 		improved = 0;
-		generateRandList(randlst, nnode);
-		for (int i = 0; i < nnode; i++){
-			int currentnode = randlst[i];
+		for (int i = 0; i < pgamma->bound_ral->vnum; i++){
+			int currentnode = pgamma->bound_ral->vlist[i];
 			int best_part = pgamma->best_improve[currentnode];
 			int gain = pgamma->gammatbl[currentnode][best_part] - pgamma->gammatbl[currentnode][pvertex[currentnode]];
 			if (gain > 0){
@@ -544,27 +599,33 @@ void descentSearch(){
 				executeStepMove(sm);
 			}
 		}
-		recordgitr();
+		gitr++;
 	}
 	//assert(calculateSum(pvertex) == fcurrent);
 	if (fcurrent > fbest){
 		recordBest(DESCENT);
 	}
-	printf("After descent: current %d-%d \n",gitr, fcurrent);
+//	printf("After descent: current %d-%d \n",gitr, fcurrent);
 }
-
+int dbg_cnt=0;
 int findBestMove(StepMove *chosenMove){
 	StepMove maxmove;
 	int bestinc = -MAX_VAL;
 	int eqcnt = 0;
-	for (int nodeidx = 0; nodeidx < nnode; nodeidx++){
+	dbg_cnt=0;
+	//for (int nodeidx = 0; nodeidx < nnode; nodeidx++){
+//	printf("bound len %d\n",pgamma->bound_ral->vnum);
+	for (int i = 0; i < pgamma->bound_ral->vnum; i++){
+		int nodeidx = pgamma->bound_ral->vlist[i];
 		int best_part = pgamma->best_improve[nodeidx];
 		assert(best_part != pvertex[nodeidx]);
 		if (best_part == EMPTY_IDX && pcnt[pvertex[nodeidx]] == 1)
 			continue; //meaningless move
 		int gain = pgamma->gammatbl[nodeidx][best_part] - pgamma->gammatbl[nodeidx][pvertex[nodeidx]];
+//		printf("node %d(%d): to part %d %d, gain %d\n ",nodeidx,pgamma->gammatbl[nodeidx][pvertex[nodeidx]],
+//		                                                  best_part, pgamma->gammatbl[nodeidx][best_part],gain);
 		StepMove curmove = make_1StepMove(nodeidx, best_part, gain);
-		if (fcurrent + gain > fbest || tabutbl[nodeidx][best_part] < tabu_itr){
+		if (fcurrent + gain > fbest || tabutbl[nodeidx][best_part] < gitr){
 			if (gain > bestinc){
 				bestinc = gain;
 				maxmove = curmove;
@@ -575,7 +636,10 @@ int findBestMove(StepMove *chosenMove){
 					maxmove = curmove;
 			}
 		}
+		if (gain >= -wbound )
+			dbg_cnt++;
 	}
+//	printf("count %d\n",dbg_cnt);
 	if (bestinc == -MAX_VAL)
 		return 0;
 	memcpy(chosenMove, &maxmove, sizeof(StepMove));
@@ -588,23 +652,33 @@ void tabuExploreSearch(){
 	int local_opt = 0;
 	int *plocal_s = new int[nnode];
 #endif
+	int cycle_cnt = 0;
+//	int hit_cnt = 0;
 	while (non_improve_cnt < nnode ){
 		StepMove chosenMove;
 		int find = findBestMove(&chosenMove);
+//		printf("Delta: %d\n",chosenMove.inc);
+//		if (chosenMove.inc >= -wbound && chosenMove.inc <=wbound ){
+//			hit_cnt++;
+//		}
 		if (find == 0){
-			cerr << "None node could be moved\n" << endl;
-			exit(0);
+//			printf("Iter %d None node could be moved\n",gitr);
+			//exit(0);
+			break;
 		}
 		int curvertex = chosenMove.orderedVertices[0];
 		int oldpart = pvertex[curvertex];
 		/*Update tabu table*/
-		if (pcnt[oldpart] == 1)
-			tabutbl[curvertex][EMPTY_IDX] = tabu_itr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
+		if (pcnt[oldpart] == 1){
+			//tabutbl[curvertex][EMPTY_IDX] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
+			tabutbl[curvertex][EMPTY_IDX] = gitr + 7 + rand() % pbkt_size;
 		// if there are only two nodes in a cluster and an edge will be moved outside, the cluster will be clean out
 		//else if (pcnt[oldpart] == 2 && move.mvertex == 2)
 		//	tabutbl[curvertex][EMPTY_IDX] = tabutenure_base + rand() % pbkt_size;
-		else
-			tabutbl[curvertex][oldpart] = tabu_itr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
+		}else{
+//			tabutbl[curvertex][oldpart] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
+			tabutbl[curvertex][oldpart] = gitr + 7 + rand() % pbkt_size;
+		}
 		executeStepMove(chosenMove);
 		if (fcurrent > fbest){
 			recordBest(TABU);
@@ -620,10 +694,14 @@ void tabuExploreSearch(){
 			memcpy(plocal_s, pvertex, sizeof(int)*nnode);
 		}
 #endif
-		recordgitr();
-		tabu_itr++;
+		gitr++;
+		cycle_cnt++;
 	}
-	tabu_itr = tabu_itr + MIN(param_coftabu, nnode / 4) + nnode; //jump D step to invalid the data in tabu table
+//	if (cycle_cnt > 0){
+//		printf("Iter %d: Hit probability %.2f\n",cycle_cnt, hit_cnt/(float)cycle_cnt);
+//	}
+
+//	tabu_itr = tabu_itr + MIN(param_coftabu, nnode / 4) + nnode; //jump D step to invalid the data in tabu table
 //	printf("After tabu: current %d-%d \n",gitr, fcurrent);
 	/*record local optimum*/
 #if LOCAL_OPT_RECORD
@@ -671,7 +749,7 @@ void directedPerturb(){
 #endif
 		moved[choice.orderedVertices[0]] = 1;
 		itr_cnt++;
-		recordgitr();
+		gitr++;
 	}
 #if (DEBUG)
 	printf("PERTURBATION ends at %lldth\n",gpass);
@@ -688,8 +766,7 @@ void threePhaseMain(int index){
 //	struct timeval tabustart,tabuend;
 //	struct timeval pstart,pend;
 //	long long psum=0,tabusum=0;
-
-	gpass = 0;
+	gitr = 0;
 	int len = 0;
 	initDataStructure();
 	//gitr < 10000000
@@ -698,22 +775,15 @@ void threePhaseMain(int index){
 #else
 	while ((double)(clock() - starttime) / CLOCKS_PER_SEC < (double)param_time){
 #endif
-
 		descentSearch();
 		tabuExploreSearch();
 		if (fbest >= param_knownbest){
 			break;
 		}
 		directedPerturb();
-//		if (gpass % 100 == 0){
-//			printf("%d,", finstats.bestresult);
-//			fflush(stdout);
-//			len++;
-//		}
-		gpass++;
 	}
 	finstats.total_run_time = (double)(clock() - starttime) / CLOCKS_PER_SEC;
-	finstats.total_run_itr = gpass;
+	finstats.total_run_itr = gitr;
 	clearDataStructure();
 }
 
@@ -740,9 +810,9 @@ void readParameters(int argc, char **argv){
 		if (argv[i][0] != '-' || argv[i][2] != 0){
 			showUsage();
 			exit(0);
-		}else if (argv[i][1] == 'f'){
+		}else if (argv[i][1] == 'f'){	/*The file name*/
 			strncpy(param_filename, argv[i+1],1000);
-		}else if (argv[i][1] == 's'){
+		}else if (argv[i][1] == 's'){	/*The maximum time*/
 			param_time = atoi(argv[i+1]);
 		}else if(argv[i][1] == 'a'){
 			param_alpha = atof(argv[i+1]);
@@ -752,6 +822,10 @@ void readParameters(int argc, char **argv){
 			param_coftabu = atoi(argv[i+1]);
 		}else if (argv[i][1] == 'r'){
 			param_runcnt = atoi(argv[i+1]);
+		}else if(argv[i][1] == 'v'){
+			param_knownbest = atoi(argv[i+1]);
+		}else if(argv[i][1] == 'g'){
+			param_seed = atoi(argv[i+1]);
 		}
 	}
 	/*check parameters*/
@@ -767,12 +841,12 @@ int setupRecordFile(){
 	char path_cwd[FILENAME_MAX];
 	char *graph_name = basename(param_filename);
 	char file_name[FILENAME_MAX];
-	time_t timer = time(NULL);
+	int randnum = rand();
 
 	getcwd(path_cwd, FILENAME_MAX);
-//	sprintf(file_name, "%s/%s.%d-rec",path_cwd, graph_name,timer);
+	sprintf(file_name, "%s/%s_%5d.rec",path_cwd, graph_name, randnum);
 
-	sprintf(file_name, "%s/%s_best",path_cwd, graph_name);
+//	sprintf(file_name, "%s/%s_best",path_cwd, graph_name);
 	frec = fopen(file_name, "a+");
 	if (frec == NULL){
 		return 0;
@@ -780,42 +854,29 @@ int setupRecordFile(){
 	return 1;
 }
 
-void showPartition(FILE *f, int *p){
-	int *mark = new int[nnode+1];
-	memset(mark, 0, sizeof(int) * (nnode+1));
-	for (int i = 0; i < nnode; i++) mark[p[i]] = 1;
-	int cnt = 1;
-	for (int i = 0; i < nnode + 1; i++){
-		if (mark[i] != 0)
-			mark[i] = cnt++;
-	}
-	for(int i = 0; i < nnode; i++){
-		fprintf(f, "%d ",mark[p[i]]);
-	}
-	fprintf(f, "\n");
-}
-int main(int argc, char **argv){
-	/*displat and read parameters*/
-	for (int i = 0; i < argc; i++){
-		fprintf(stdout, "%s ", argv[i]);
-	}
-	fprintf(stdout, "\n");
-	readParameters(argc, argv);
 
+int main(int argc, char **argv){
+	/*display and read parameters*/
+	readParameters(argc, argv);
+	srand(param_seed);
 	//set logging device
 	if (0 == setupRecordFile()){
 		cerr << "Failed in open log file" << endl;
 		exit(2);
 	}
+	//frec = stdout;
 
 	//load graph by jostle format
 	loadCompletedGraph(param_filename);
-	/*initialize some random parameter*/
-	srand((unsigned int)time(NULL));
-	fprintf(stdout, "file %s;  time %d; alpha %.2f; beta %.2f; tabucof %d; param_runcnt %d\n", \
-			param_filename, param_time, param_alpha, param_beta,  param_coftabu, param_runcnt);
 
-	fprintf(stdout, "index\t best_obj\t found_time\t best_itr\t tabu_itr\t patnum\t  total_time\t total_itr\n");
+	/*initialize some random parameter*/
+//	srand((unsigned int)time(NULL));
+	for (int i = 0; i < argc; i++){
+		fprintf(frec, "%s ", argv[i]);
+	}
+	fprintf(frec, "\n");
+
+	fprintf(frec, "idx\t best_v\t npat\t find_t\t find_i\t ttl_t\t  ttl_i\n");
 	int cnt = 0;
 	float sumtime = 0;
 	int sumres = 0;
@@ -825,21 +886,25 @@ int main(int argc, char **argv){
 	int *bestInAlllPartition = new int[nnode];
 	while (cnt < param_runcnt){
 		threePhaseMain(cnt);
+#if (DETAIL)
 		int checked = calculateSum(finstats.bestpat);
-		if (checked != finstats.bestresult){
-			fprintf(stderr, "fatal error, result does not match %d %d", finstats.bestresult, checked);
+		if (checked != finstats.best_obj_value){
+			fprintf(stderr, "fatal error, result does not match %d %d", finstats.best_obj_value, checked);
 			exit(1);
 		}
-		fprintf(stdout, "%d\t %d\t %.2f\t %lld\t %lld\t %d\t %.2f %lld\n",cnt+1, finstats.bestresult, finstats.best_found_time,
-				 finstats.globle_itr, finstats.tabu_itr, countPartition(finstats.bestpat),finstats.total_run_time,finstats.total_run_itr);
-		if (finstats.bestresult > bestInAll){
-			bestInAll = finstats.bestresult;
+#endif
+		fprintf(frec, "%d\t %d\t %d\t %.2f\t %lld\t %.2f\t %lld\n",cnt+1, finstats.best_obj_value, finstats.best_part_num,
+				finstats.best_found_time, finstats.best_found_iter, finstats.total_run_time,finstats.total_run_itr);
+		if (finstats.best_obj_value > bestInAll){
+			bestInAll = finstats.best_obj_value;
+#if (DETAIL)
 			memcpy(bestInAlllPartition, finstats.bestpat, sizeof(int) * nnode);
+#endif
 		}
 		cnt++;
 		sumtime += finstats.best_found_time;
-		sumres += finstats.bestresult;
-		sumiter += finstats.globle_itr;
+		sumres += finstats.best_obj_value;
+		sumiter += finstats.best_found_iter;
 #if (LOCAL_OPT_RECORD)
 		/*clear local optimum*/
 		fprintf(frec, "local optimums number %d. gloabl best %d, Format(dis, fit)\n",lc_num, bestInAll);
@@ -852,13 +917,13 @@ int main(int argc, char **argv){
 		lc_num = 0;
 #endif
 	}
-	fprintf(stdout,"best result: %d\n",bestInAll);
-	fprintf(stdout, "average time:%f\n", sumtime / param_runcnt);
-	fprintf(stdout, "average result:%f\n", (float)sumres/param_runcnt);
-	fprintf(stdout, "average best iteration: %f\n", (float)sumiter/param_runcnt);
-
-	fprintf(frec, "%d\n", bestInAll);
+	fprintf(frec,"best result: %d\n",bestInAll);
+	fprintf(frec, "average time:%.2f\n", sumtime / param_runcnt);
+	fprintf(frec, "average result:%.2f\n", (float)sumres/param_runcnt);
+	fprintf(frec, "average best iteration: %d\n", sumiter/param_runcnt);
+#if (DETAIL)
 	showPartition(frec, bestInAlllPartition);
+#endif
 	fclose(frec);
 	return 0;
 }

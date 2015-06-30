@@ -110,4 +110,47 @@ StepMove randSelect(FixedSizeQueue *fq){
 void disposeQueue(FixedSizeQueue *fq){
 	delete fq;
 }
-/****************************定义桶结构***************************/
+/****************************定义random access list结构***************************/
+RandAcessList* ral_init(int capacity){
+	RandAcessList *ral = new RandAcessList;
+	ral->vlist = new int[capacity];
+	ral->vpos = new int[capacity];
+	ral->vnum = 0;
+	ral->capacity = capacity;
+	for (int i = 0; i< capacity;i++){
+		ral->vpos[i] = capacity;
+	}
+	return ral;
+}
+
+void ral_add(RandAcessList *ral, int vid){
+//	assert(ral->vpos[vid] >= ral->vnum);
+	ral->vlist[ral->vnum] = vid;
+	ral->vpos[vid] = ral->vnum;
+	ral->vnum++;
+}
+void ral_delete(RandAcessList *ral, int vid){
+//	assert(ral->vpos[vid] < ral->vnum);
+	int last_id = ral->vlist[ral->vnum - 1];
+	int id_pos = ral->vpos[vid];
+	ral->vlist[id_pos] = last_id;
+	ral->vpos[last_id] = id_pos;
+	ral->vnum--;
+//	ral->vpos[vid] = ral->vnum; /*It is not obligatory*/
+}
+
+void ral_clear(RandAcessList *ral){
+	ral->vnum = 0;
+}
+void ral_release(RandAcessList *ral){
+	delete[] ral->vlist;
+	delete[] ral->vpos;
+	delete ral;
+}
+void ral_showList(RandAcessList *ral, FILE *f){
+	fprintf(f, "%d: ",ral->vnum);
+	for(int i = 0;i < ral->vnum; i++){
+		fprintf(f, "%d ", ral->vlist[i]);
+	}
+	fprintf(f, "\n");
+}
