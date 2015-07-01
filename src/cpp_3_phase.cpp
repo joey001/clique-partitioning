@@ -118,7 +118,6 @@ int *pvertex;		/*The partition of each vertex, for example, v is in partition pv
 GammaData *pgamma;	/*Heap organized gamma table for each vertex to each partition*/
 int fcurrent = 0;
 int wbound;
-RandAcessList *wral;	/*Records all the move with more than -wbound gain*/
 
 clock_t starttime;	/*The start time of */
 int fbest = 0;
@@ -670,14 +669,12 @@ void tabuExploreSearch(){
 		int oldpart = pvertex[curvertex];
 		/*Update tabu table*/
 		if (pcnt[oldpart] == 1){
-			//tabutbl[curvertex][EMPTY_IDX] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
-			tabutbl[curvertex][EMPTY_IDX] = gitr + 7 + rand() % pbkt_size;
+			tabutbl[curvertex][EMPTY_IDX] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
 		// if there are only two nodes in a cluster and an edge will be moved outside, the cluster will be clean out
 		//else if (pcnt[oldpart] == 2 && move.mvertex == 2)
 		//	tabutbl[curvertex][EMPTY_IDX] = tabutenure_base + rand() % pbkt_size;
 		}else{
-//			tabutbl[curvertex][oldpart] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
-			tabutbl[curvertex][oldpart] = gitr + 7 + rand() % pbkt_size;
+			tabutbl[curvertex][oldpart] = gitr + MIN(param_coftabu, nnode / 4) + rand() % pbkt_size;
 		}
 		executeStepMove(chosenMove);
 		if (fcurrent > fbest){
@@ -909,9 +906,11 @@ int main(int argc, char **argv){
 		/*clear local optimum*/
 		fprintf(frec, "local optimums number %d. gloabl best %d, Format(dis, fit)\n",lc_num, bestInAll);
 		for (int i = 0; i < lc_num; i++){
-			int di = calculateDistance(lc_recs[i].pv, finstats.bestpat);
-			double nor_di = (double)di *2/ (nnode *(nnode-1));
-			fprintf(frec, "%d, %.4f, %d\n", di, nor_di, lc_recs[i].s);
+			//int di = calculateDistance(lc_recs[i].pv, finstats.bestpat);
+			//double nor_di = (double)di *2/ (nnode *(nnode-1));
+			//fprintf(frec, "%d, %.4f, %d\n", di, nor_di, lc_recs[i].s);
+			fprintf(frec, "%d", lc_recs[i].s);
+			showPartition(frec, lc_recs[i].pv);
 			delete lc_recs[i].pv;
 		}
 		lc_num = 0;
