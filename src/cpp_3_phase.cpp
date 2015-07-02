@@ -24,8 +24,8 @@
 using namespace std;
 
 #define DEBUG 0
-#define DETAIL 1
-#define LOCAL_OPT_RECORD 1
+#define DETAIL 0
+#define LOCAL_OPT_RECORD 0
 #define MAX_LOCAL_REC_NUM 50
 
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -38,9 +38,9 @@ const int MAX_VAL = 999999999;
 const float CONST_E = 2.71828f;
 
 //Modified in the script
-char param_filename[1000] = "/home/zhou/cpp/benchmarks/charon_busco/rand400-5.txt";
-int param_knownbest = 12133;
-int param_runcnt = 1;		// the running time for each instance
+char param_filename[1000] = "/home/zhou/cpp/benchmarks/charon_busco/regnier300-50.txt";
+int param_knownbest = 32164;
+int param_runcnt = 10;		// the running time for each instance
 int param_time = 400;		//the max time for tabu search procedure, unit: second
 
 float param_alpha = 0.1f; 	// the ratio for weak perturbation
@@ -68,8 +68,8 @@ typedef struct STGammaData{
 	int *best_improve;
 	int global_best;
 
-	RandAcessList *bound_ral;
-	int *isbound;
+	//RandAcessList *bound_ral;
+	//int *isbound;
 }GammaData;
 
 typedef enum{DESCENT, TABU, DIRECTED} SearchType;
@@ -93,9 +93,6 @@ typedef struct ST_Stats{
 typedef struct ST_LC_OPT{
 	int *pv;
 	int s;
-//	bool operator < (const ST_LC_OPT &other){
-//		return s > other.s;
-//	}
 }LC_opt;
 LC_opt lc_recs[MAX_LOCAL_REC_NUM];
 int lc_num = 0;
@@ -117,7 +114,7 @@ int *pcnt;	 		/*The number of vertices in each partition*/
 int *pvertex;		/*The partition of each vertex, for example, v is in partition pvertex[v] */
 GammaData *pgamma;	/*Heap organized gamma table for each vertex to each partition*/
 int fcurrent = 0;
-int wbound;
+//int wbound;
 
 clock_t starttime;	/*The start time of */
 int fbest = 0;
@@ -367,9 +364,9 @@ GammaData* buildGammaData(){
 	gamma->best_improve = new int[nnode];
 	gamma->rows = new GammaRow[nnode];
 
-	gamma->isbound = new int[nnode];
-	gamma->bound_ral = ral_init(nnode);
-	memset(gamma->isbound, 0, sizeof(int) * nnode);
+//	gamma->isbound = new int[nnode];
+//	gamma->bound_ral = ral_init(nnode);
+//	memset(gamma->isbound, 0, sizeof(int) * nnode);
 
 	memset(gamma->best_improve, -1, sizeof(int) * nnode);
 	//for each node
@@ -397,14 +394,6 @@ GammaData* buildGammaData(){
 				if (grow->values[grow->heap[2]] > grow->values[left])
 					gamma->best_improve[i] = grow->heap[2];
 			}
-		}
-		int delta = gamma->gammatbl[i][gamma->best_improve[i]] - gamma->gammatbl[i][selft_part];
-		if (delta >= -wbound && (!gamma->isbound[i])){
-			ral_add(gamma->bound_ral, i);
-			gamma->isbound[i] = 1;
-		}else if (delta < -wbound && (gamma->isbound[i])){
-			ral_delete(gamma->bound_ral, i);
-			gamma->isbound[i] = 0;
 		}
 	}
 	return gamma;
@@ -446,14 +435,6 @@ void updateGamma(GammaData *gamma, int vertex, int src_part, int dest_part){
 				if (v[grow->heap[2]] > v[left])
 					gamma->best_improve[i] = grow->heap[2];
 			}
-		}
-		int delta = gamma->gammatbl[i][gamma->best_improve[i]] - gamma->gammatbl[i][self_part];
-		if (delta >= -wbound && (!gamma->isbound[i])){
-			ral_add(gamma->bound_ral, i);
-			gamma->isbound[i] = 1;
-		}else if (delta < -wbound && (gamma->isbound[i])){
-			ral_delete(gamma->bound_ral, i);
-			gamma->isbound[i] = 0;
 		}
 	}
 }
@@ -561,7 +542,7 @@ void initDataStructure(){
 
 	starttime = clock();
 	gitr = 0;
-	wbound = max_eweight; /*set wbound as max_eweight*/
+//	wbound = max_eweight; /*set wbound as max_eweight*/
 #if (LOCAL_OPT_RECORD)
 	for (int i = 0; i < MAX_LOCAL_REC_NUM; i++){
 		lc_recs[i].pv = NULL;
@@ -585,11 +566,12 @@ void clearDataStructure(){
 }
 void descentSearch(){
 	int improved = 1;
-
+	int *randlst = new int[nnode];
 	while (improved == 1){
 		improved = 0;
-		for (int i = 0; i < pgamma->bound_ral->vnum; i++){
-			int currentnode = pgamma->bound_ral->vlist[i];
+		generateRandList(randlst, nnode);
+		for (int i = 0; i < nnode; i++){
+			int currentnode = randlst[i];
 			int best_part = pgamma->best_improve[currentnode];
 			int gain = pgamma->gammatbl[currentnode][best_part] - pgamma->gammatbl[currentnode][pvertex[currentnode]];
 			if (gain > 0){
@@ -605,6 +587,7 @@ void descentSearch(){
 		recordBest(DESCENT);
 	}
 //	printf("After descent: current %d-%d \n",gitr, fcurrent);
+	delete[] randlst;
 }
 int dbg_cnt=0;
 int findBestMove(StepMove *chosenMove){
@@ -614,8 +597,7 @@ int findBestMove(StepMove *chosenMove){
 	dbg_cnt=0;
 	//for (int nodeidx = 0; nodeidx < nnode; nodeidx++){
 //	printf("bound len %d\n",pgamma->bound_ral->vnum);
-	for (int i = 0; i < pgamma->bound_ral->vnum; i++){
-		int nodeidx = pgamma->bound_ral->vlist[i];
+	for (int nodeidx = 0; nodeidx < nnode; nodeidx++){
 		int best_part = pgamma->best_improve[nodeidx];
 		assert(best_part != pvertex[nodeidx]);
 		if (best_part == EMPTY_IDX && pcnt[pvertex[nodeidx]] == 1)
@@ -635,8 +617,8 @@ int findBestMove(StepMove *chosenMove){
 					maxmove = curmove;
 			}
 		}
-		if (gain >= -wbound )
-			dbg_cnt++;
+//		if (gain >= -wbound )
+//			dbg_cnt++;
 	}
 //	printf("count %d\n",dbg_cnt);
 	if (bestinc == -MAX_VAL)
@@ -809,13 +791,13 @@ void readParameters(int argc, char **argv){
 			exit(0);
 		}else if (argv[i][1] == 'f'){	/*The file name*/
 			strncpy(param_filename, argv[i+1],1000);
-		}else if (argv[i][1] == 's'){	/*The maximum time*/
+		}else if (argv[i][1] == 't'){	/*The maximum time*/
 			param_time = atoi(argv[i+1]);
 		}else if(argv[i][1] == 'a'){
 			param_alpha = atof(argv[i+1]);
 		}else if (argv[i][1] == 'b'){
 			param_beta =  atof(argv[i+1]);
-		}else if (argv[i][1] == 't'){
+		}else if (argv[i][1] == 'c'){
 			param_coftabu = atoi(argv[i+1]);
 		}else if (argv[i][1] == 'r'){
 			param_runcnt = atoi(argv[i+1]);
