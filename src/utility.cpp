@@ -20,7 +20,7 @@ void generateRandList(int *randlist, int len){
 		randlist[idx] = idx;
 	}
 	for (idx = 0; idx < len; idx++){
-		int randid = rand() % len;
+		int randid = random() % len;
 		int tmp = randlist[idx];
 		randlist[idx] = randlist[randid];
 		randlist[randid] = tmp;
@@ -35,7 +35,7 @@ void swapAry(int *ary, int idx1, int idx2){
 StepMove make_1StepMove(int vertex, int target, int gain){
 	StepMove sm;
 	sm.mvertex = 1;
-	sm.orderedVertices[0] = vertex;
+	sm.orderedVetexes[0] = vertex;
 	sm.orderedTarget[0] = target;
 	sm.orderedTarget[1] = target;
 	sm.inc = gain;
@@ -44,8 +44,8 @@ StepMove make_1StepMove(int vertex, int target, int gain){
 StepMove make_2StepMove(int vertex1, int vertex2, int target1, int target2, int gain){
 	StepMove sm;
 	sm.mvertex = 2;
-	sm.orderedVertices[0] = vertex1;
-	sm.orderedVertices[1] = vertex2;
+	sm.orderedVetexes[0] = vertex1;
+	sm.orderedVetexes[1] = vertex2;
 	sm.orderedTarget[0] = target1;
 	sm.orderedTarget[1] = target2;
 	sm.inc = gain;
@@ -110,47 +110,4 @@ StepMove randSelect(FixedSizeQueue *fq){
 void disposeQueue(FixedSizeQueue *fq){
 	delete fq;
 }
-/****************************定义random access list结构***************************/
-RandAcessList* ral_init(int capacity){
-	RandAcessList *ral = new RandAcessList;
-	ral->vlist = new int[capacity];
-	ral->vpos = new int[capacity];
-	ral->vnum = 0;
-	ral->capacity = capacity;
-	for (int i = 0; i< capacity;i++){
-		ral->vpos[i] = capacity;
-	}
-	return ral;
-}
-
-void ral_add(RandAcessList *ral, int vid){
-//	assert(ral->vpos[vid] >= ral->vnum);
-	ral->vlist[ral->vnum] = vid;
-	ral->vpos[vid] = ral->vnum;
-	ral->vnum++;
-}
-void ral_delete(RandAcessList *ral, int vid){
-//	assert(ral->vpos[vid] < ral->vnum);
-	int last_id = ral->vlist[ral->vnum - 1];
-	int id_pos = ral->vpos[vid];
-	ral->vlist[id_pos] = last_id;
-	ral->vpos[last_id] = id_pos;
-	ral->vnum--;
-//	ral->vpos[vid] = ral->vnum; /*It is not obligatory*/
-}
-
-void ral_clear(RandAcessList *ral){
-	ral->vnum = 0;
-}
-void ral_release(RandAcessList *ral){
-	delete[] ral->vlist;
-	delete[] ral->vpos;
-	delete ral;
-}
-void ral_showList(RandAcessList *ral, FILE *f){
-	fprintf(f, "%d: ",ral->vnum);
-	for(int i = 0;i < ral->vnum; i++){
-		fprintf(f, "%d ", ral->vlist[i]);
-	}
-	fprintf(f, "\n");
-}
+/****************************定义桶结构***************************/
