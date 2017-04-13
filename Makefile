@@ -8,9 +8,6 @@
 #------------------------------------------------------------
 
 TARGET = cpp
-
-CPLEXDIR      = /share/apps/cplex/12.6.1/CPLEX_Studio/cplex
-CONCERTDIR    = /share/apps/cplex/12.6.1/CPLEX_Studio/concert
 DIR_SRC = ./src
 DIR_OBJ = ./
 # ---------------------------------------------------------------------
